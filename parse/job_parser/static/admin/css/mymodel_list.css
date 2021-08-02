@@ -1,0 +1,6 @@
+.field-informLink {
+    max-width: 30em;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}

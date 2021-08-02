@@ -1,18 +1,23 @@
 from collections import namedtuple
 import requests
 import bs4
+from django.core.management.base import BaseCommand
+
+from job_parser.models import Vacancy
 
 InnerBlock = namedtuple(
     'Block',
-    'jobTitle,companyLocation,companyName,c_url,salary,date,job,more')
+    ('jobTitle,companyLocation,companyName,'
+     'c_url,salary,date,details,informLink')
+    )
 
 
 class Block(InnerBlock):
     def __str__(self) -> str:
         return (
             f'{self.jobTitle}\n {self.companyLocation}\n {self.companyName}\n'
-            f'{self.c_url}\n {self.salary}\n {self.job}\n {self.date}\n'
-            f'{self.more}\n')
+            f'{self.c_url}\n {self.salary}\n {self.details}\n {self.date}\n'
+            f'{self.informLink}\n')
 
 
 class IndeedParser:
@@ -39,26 +44,6 @@ class IndeedParser:
         r = self.session.get(url, params=params)
         return r.text
 
-    """@staticmethod
-    def parse_date(item: str):
-        params = item.strip().split(' ')
-        first, second = params
-        if first == 'Just' and second == 'posted':
-            date = datetime.date.today()
-        elif second == 'days' and first != '30+':
-            days_ago = type(int(first))
-            date = datetime.date.today() - datetime.timedelta(days=days_ago)
-        elif second == 'day':
-            date = datetime.date.today() - datetime.timedelta(days=1)
-        elif first == '30+':
-            params = item.strip().split('+')
-            first = int(params)
-            date = datetime.date.today() - datetime.timedelta(days=first)
-        else:
-            raise Exception('Не удалось распарсить дату', item)
-        time = datetime.datetime.strptime('%H:%M').time()
-        return datetime.datetime.combine(date=date, time=time)"""
-
     def parse_block(self, item):
         url_block = item
         href = url_block.get('href')
@@ -83,22 +68,20 @@ class IndeedParser:
                     c_url = 'https://ca.indeed.com' + company_url
             else:
                 companyName_block = item.select_one('span.companyName')
-                companyName = companyName_block.get_text('\n')
+                companyName = companyName_block.get_text(' ')
                 c_url = None
 
             companyLocation_block = item.select_one('div.company_location')
             if companyLocation_block is not None:
-                companyLocation = companyLocation_block.get_text('\n')
+                companyLocation = companyLocation_block.get_text(' ')
 
-            job = None
+            job = 'Details are not specified'
             job_block = item.select_one('div.job-snippet > ul > li')
             if job_block:
                 job = job_block.get_text('\n')
 
             date_block = item.select_one('span.date')
             date = date_block.get_text('\n')
-            """if absolute_date:
-                date = IndeedParser.parse_date(item=absolute_date)"""
 
             """Get salary"""
 
@@ -106,7 +89,29 @@ class IndeedParser:
             if salary_block is not None:
                 salary = salary_block.get_text('\n')
             else:
-                salary = None
+                salary = "Not provided."
+            try:
+                p = Vacancy.objects.get(
+                    jobTitle=jobTitle, companyName=companyName, details=job)
+                p.informLink = url
+                p.companyLocation = companyLocation
+                p.c_url = c_url
+                p.salary = salary
+                p.p_date = date
+                p.save()
+            except Vacancy.DoesNotExist:
+                p = Vacancy(
+                    jobTitle=jobTitle,
+                    companyName=companyName,
+                    companyLocation=companyLocation,
+                    c_url=c_url,
+                    salary=salary,
+                    p_date=date,
+                    details=job,
+                    informLink=url,
+                ).save()
+
+            print(f'Vacancies {p}')
 
             return Block(
                 jobTitle=jobTitle,
@@ -114,9 +119,9 @@ class IndeedParser:
                 companyLocation=companyLocation,
                 c_url=c_url,
                 salary=salary,
-                job=job,
+                details=job,
                 date=date,
-                more=url
+                informLink=url
             )
 
         except Exception as e:
@@ -139,10 +144,9 @@ class IndeedParser:
         return soup.select('p.dupetext') is not None
 
 
-def main():
-    p = IndeedParser()
-    p.get_pagination_limit()
+class Command(BaseCommand):
+    help = 'Vacancies parsing'
 
-
-if __name__ == '__main__':
-    main()
+    def handle(self, *args, **options):
+        p = IndeedParser()
+        p.get_pagination_limit()
